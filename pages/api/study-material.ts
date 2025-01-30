@@ -1,5 +1,8 @@
 import OpenAI from 'openai';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { SummarizationTool } from '../../lib/tools/summarization-tool';
+import { QuestionGenerationTool } from '../../lib/tools/question-generation-tool';
+import { DifficultyAdjusterTool } from '../../lib/tools/difficulty-adjuster-tool';
 
 export const config = {
   api: {
@@ -34,10 +37,14 @@ export default async function handler(
       });
     }
 
-    const { documentText, materialType, subject } = req.body;
+    const { documentText, materialType, subject, complexity, skillLevel, questionFormat, numberOfQuestions } = req.body;
     console.log('Request details:', {
       materialType,
       subject,
+      complexity,
+      skillLevel,
+      questionFormat,
+      numberOfQuestions,
       textLength: documentText?.length || 0,
       hasText: !!documentText
     });
@@ -49,22 +56,62 @@ export default async function handler(
       });
     }
 
-    // Limit the text size to a more manageable chunk
-    const maxLength = 4000; // Reduced to ~1000 tokens
-    const truncatedText = documentText.slice(0, maxLength);
-    
-    console.log('Processing document:', {
-      originalLength: documentText.length,
-      truncatedLength: truncatedText.length,
-      materialType,
-      subject
-    });
+    // Clean and validate text
+    const cleanedText = documentText
+      .replace(/[^\x20-\x7E\n\r\t]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
 
-    const prompt = generatePrompt(truncatedText, materialType, subject);
-    console.log('Generated prompt length:', prompt.length);
+    if (cleanedText.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'No valid text content found in document'
+      });
+    }
+
+    let content: string;
+    // Remove the truncation
+    const maxChunkSize = 8000; // Increased from 4000
+    const textChunks = [];
     
-    try {
-      console.log('Calling OpenAI API...');
+    // Split text into chunks if it's too long
+    for (let i = 0; i < cleanedText.length; i += maxChunkSize) {
+      textChunks.push(cleanedText.slice(i, i + maxChunkSize));
+    }
+
+    console.log(`Processing text in ${textChunks.length} chunks`);
+
+    if (materialType === 'practice_quiz') {
+      const questionGenerator = new QuestionGenerationTool(process.env.OPENAI_API_KEY!);
+      const numQuestions = Math.max(1, Math.min(20, parseInt(String(numberOfQuestions), 10) || 5));
+      
+      // Pass the full text to the question generator
+      const questions = await questionGenerator.generateQuestionsWithExplanations({
+        text: cleanedText, // Pass the full text
+        format: questionFormat || 'MCQ',
+        skillLevel: skillLevel || 'INTERMEDIATE',
+        numberOfQuestions: numQuestions,
+        subject
+      });
+
+      content = formatQuestionsWithExplanations(questions);
+    } else if (materialType === 'summary') {
+      // For summaries, process each chunk and combine
+      const summaries = [];
+      const summarizer = new SummarizationTool(process.env.OPENAI_API_KEY!);
+      
+      for (const chunk of textChunks) {
+        const summary = await summarizer.summarize({
+          text: chunk,
+          complexity: complexity || 'intermediate',
+          subject
+        });
+        summaries.push(summary);
+      }
+      
+      content = summaries.join('\n\n');
+    } else {
+      // For other types, process first chunk only
       const response = await openai.chat.completions.create({
         model: "gpt-3.5-turbo",
         messages: [
@@ -74,53 +121,49 @@ export default async function handler(
           },
           {
             role: "user",
-            content: prompt
+            content: generatePrompt(textChunks[0], materialType, subject)
           }
         ],
         temperature: 0.7,
-        max_tokens: 1000, // Reduced token limit
+        max_tokens: 1000
       });
-
-      console.log('OpenAI API response received');
-      const content = response.choices[0]?.message?.content;
       
-      if (!content) {
-        console.error('No content in OpenAI response');
-        return res.status(500).json({
-          success: false,
-          error: 'No content generated from OpenAI'
-        });
-      }
+      content = response.choices[0]?.message?.content || '';
+    }
 
-      console.log('Sending successful response, content length:', content.length);
-      return res.status(200).json({ 
-        success: true, 
+    // Only adjust difficulty if content was generated successfully
+    if (content && skillLevel) {
+      const difficultyAdjuster = new DifficultyAdjusterTool(process.env.OPENAI_API_KEY);
+      content = await difficultyAdjuster.adjustDifficulty({
         content,
-        truncated: documentText.length > maxLength
-      });
-
-    } catch (openaiError: any) {
-      console.error('OpenAI API error:', {
-        message: openaiError.message,
-        type: openaiError.type,
-        stack: openaiError.stack
-      });
-      
-      return res.status(500).json({
-        success: false,
-        error: `OpenAI API error: ${openaiError.message}`
+        targetSkillLevel: skillLevel,
+        contentType: materialType === 'summary' ? 'SUMMARY' : 
+                    materialType === 'practice_quiz' ? 'QUESTIONS' : 'EXPLANATION',
+        subject
       });
     }
 
-  } catch (error: any) {
-    console.error('General error:', {
-      message: error.message,
-      stack: error.stack
+    if (!content) {
+      throw new Error('No content generated');
+    }
+
+    return res.status(200).json({
+      success: true,
+      content,
+      difficulty: skillLevel,
+      truncated: cleanedText.length > 4000
+    });
+
+  } catch (processingError: any) {
+    console.error('Processing error:', {
+      message: processingError.message,
+      stack: processingError.stack,
+      type: processingError.type
     });
     
-    return res.status(500).json({ 
-      success: false, 
-      error: `Failed to generate study material: ${error.message}` 
+    return res.status(500).json({
+      success: false,
+      error: `Error processing document: ${processingError.message}`
     });
   }
 }
@@ -138,4 +181,41 @@ function generatePrompt(text: string, type: string, subject?: string): string {
     default:
       return `Summarize the following text${subjectContext}:\n\n${text}`;
   }
+}
+
+function formatQuestionsWithExplanations(questions: Question[]): string {
+  return questions.map((q, index) => {
+    let output = `${index + 1}. ${q.question}\n`;
+    
+    if (q.options) {
+      output += q.options.map((opt, i) => 
+        `   ${String.fromCharCode(65 + i)}) ${opt}`
+      ).join('\n') + '\n';
+    }
+    
+    output += `\nAnswer: ${q.answer}\n`;
+    
+    if (q.detailedExplanation) {
+      output += '\nExplanation:\n';
+      
+      // Format steps more concisely
+      q.detailedExplanation.steps.forEach((step, i) => {
+        output += `• ${step}\n`;
+      });
+      
+      // Only show concepts if they exist and are meaningful
+      if (q.detailedExplanation.conceptsUsed?.length > 0) {
+        output += '\nKey Concepts: ';
+        output += q.detailedExplanation.conceptsUsed.join(', ');
+        output += '\n';
+      }
+      
+      // Only show additional notes if they exist
+      if (q.detailedExplanation.additionalNotes?.trim()) {
+        output += `Tip: ${q.detailedExplanation.additionalNotes}\n`;
+      }
+    }
+    
+    return output + '\n-------------------\n';
+  }).join('\n');
 } 

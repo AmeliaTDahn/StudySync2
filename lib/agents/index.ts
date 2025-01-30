@@ -88,57 +88,45 @@ export class StudyAgent {
   async generateStudyMaterial({
     documentText,
     materialType,
-    subject = '',
-    additionalInstructions = ''
-  }: GenerateStudyMaterialParams) {
+    subject,
+    complexity,
+    questionFormat,
+    skillLevel,
+    numberOfQuestions
+  }: {
+    documentText: string;
+    materialType: StudyMaterialType;
+    subject?: string;
+    complexity?: SummaryComplexity;
+    questionFormat?: QuestionFormat;
+    skillLevel?: SkillLevel;
+    numberOfQuestions?: number;
+  }) {
     try {
-      if (!documentText) {
-        throw new Error("No document text provided");
+      const response = await fetch('/api/study-material', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          documentText,
+          materialType,
+          subject,
+          complexity,
+          questionFormat,
+          skillLevel,
+          numberOfQuestions
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('HTTP error! status: ' + response.status);
       }
 
-      // Split the document into chunks
-      const chunks = await this.chunker.splitDocument(documentText);
-      console.log(`Document split into ${chunks.length} chunks`);
-
-      // Create the processing function
-      const processor = async (chunk: string) => {
-        return await this.processChunk(chunk, materialType);
-      };
-
-      // Choose combination strategy based on material type
-      const combineStrategy = materialType === 'summary' ? 'summarize' : 'concatenate';
-
-      // Process all chunks and combine results
-      const processedContent = await this.chunker.processChunksWithModel(
-        chunks,
-        processor,
-        combineStrategy
-      );
-
-      // Final formatting based on material type
-      let finalContent = processedContent;
-      if (materialType === 'practice_quiz') {
-        // Additional processing for quiz format
-        const formatPrompt = `Format the following content as a clear quiz with numbered questions:
-          ${processedContent}`;
-        const formattedResponse = await this.model.invoke(formatPrompt);
-        finalContent = formattedResponse.content as string;
-      }
-
-      return {
-        success: true,
-        content: finalContent,
-        materialType,
-        chunkCount: chunks.length
-      };
-
+      return await response.json();
     } catch (error) {
-      console.error("Error generating study material:", error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error occurred",
-        materialType
-      };
+      console.error('Error generating study material:', error);
+      throw error;
     }
   }
 }

@@ -1,9 +1,12 @@
+import { SummarizationTool, type SummaryComplexity } from './tools/summarization-tool';
+
 export type StudyMaterialType = 'summary' | 'study_guide' | 'practice_quiz';
 
 interface StudyMaterialRequest {
   documentText: string;
   materialType: StudyMaterialType;
   subject?: string;
+  complexity?: SummaryComplexity;
 }
 
 interface StudyMaterialResponse {
@@ -21,6 +24,7 @@ export const studyAgent = {
     documentText,
     materialType,
     subject,
+    complexity = 'intermediate'
   }: StudyMaterialRequest): Promise<StudyMaterialResponse> {
     try {
       const controller = new AbortController();
@@ -35,6 +39,7 @@ export const studyAgent = {
           documentText,
           materialType,
           subject,
+          complexity
         }),
         signal: controller.signal
       });
