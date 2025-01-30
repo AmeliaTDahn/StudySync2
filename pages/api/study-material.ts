@@ -3,6 +3,9 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { SummarizationTool } from '../../lib/tools/summarization-tool';
 import { QuestionGenerationTool } from '../../lib/tools/question-generation-tool';
 import { DifficultyAdjusterTool } from '../../lib/tools/difficulty-adjuster-tool';
+import { StudyGuideTool } from '../../lib/tools/study-guide-tool';
+import { FillInBlankTool } from '../../lib/tools/fill-in-blank-tool';
+import { OpenEndedTool } from '../../lib/tools/open-ended-tool';
 
 export const config = {
   api: {
@@ -82,19 +85,33 @@ export default async function handler(
     console.log(`Processing text in ${textChunks.length} chunks`);
 
     if (materialType === 'practice_quiz') {
-      const questionGenerator = new QuestionGenerationTool(process.env.OPENAI_API_KEY!);
-      const numQuestions = Math.max(1, Math.min(20, parseInt(String(numberOfQuestions), 10) || 5));
-      
-      // Pass the full text to the question generator
-      const questions = await questionGenerator.generateQuestionsWithExplanations({
-        text: cleanedText, // Pass the full text
-        format: questionFormat || 'MCQ',
-        skillLevel: skillLevel || 'INTERMEDIATE',
-        numberOfQuestions: numQuestions,
-        subject
-      });
+      const format = questionFormat || 'MCQ';
+      let questions;
 
-      content = formatQuestionsWithExplanations(questions);
+      try {
+        const questionGenerator = new QuestionGenerationTool(process.env.OPENAI_API_KEY!);
+        const questions = await questionGenerator.generateQuestionsWithExplanations({
+          text: cleanedText,
+          skillLevel: skillLevel || 'INTERMEDIATE',
+          numberOfQuestions: 10,
+          subject
+        });
+
+        // Add logging to check the response
+        console.log('Questions generated:', questions?.length);
+        
+        if (!questions || questions.length === 0) {
+          throw new Error('No questions were generated');
+        }
+
+        content = formatQuestionsWithExplanations(questions);
+        
+        // Add logging to check formatted content
+        console.log('Content formatted successfully');
+      } catch (error) {
+        console.error('Error generating quiz:', error);
+        throw new Error(`Failed to generate quiz: ${error.message}`);
+      }
     } else if (materialType === 'summary') {
       // For summaries, process each chunk and combine
       const summaries = [];
@@ -110,6 +127,42 @@ export default async function handler(
       }
       
       content = summaries.join('\n\n');
+    } else if (materialType === 'study_guide') {
+      try {
+        // Process entire text in manageable chunks
+        const maxChunkSize = 8000;
+        const chunks = [];
+        
+        // Split text into chunks while preserving context
+        for (let i = 0; i < cleanedText.length; i += maxChunkSize) {
+          chunks.push(cleanedText.slice(i, i + maxChunkSize));
+        }
+
+        // Process each chunk and combine results
+        const studyGuideSections = await Promise.all(chunks.map(async (chunk, index) => {
+          const studyGuideTool = new StudyGuideTool(process.env.OPENAI_API_KEY!);
+          const sectionGuide = await studyGuideTool.generateStudyGuide({
+            text: chunk,
+            subject,
+            skillLevel: skillLevel || 'INTERMEDIATE',
+            sectionNumber: index + 1,
+            totalSections: chunks.length
+          });
+          return sectionGuide;
+        }));
+
+        // Combine sections with proper formatting
+        content = `
+# Comprehensive Study Guide
+${studyGuideSections.join('\n\n')}
+
+## Key Concepts Review
+${await generateKeyConceptsReview(studyGuideSections)}
+`;
+      } catch (error) {
+        console.error('Error generating study guide:', error);
+        throw error;
+      }
     } else {
       // For other types, process first chunk only
       const response = await openai.chat.completions.create({
@@ -121,7 +174,7 @@ export default async function handler(
           },
           {
             role: "user",
-            content: generatePrompt(textChunks[0], materialType, subject)
+            content: generatePrompt(textChunks[0], materialType, subject, numberOfQuestions)
           }
         ],
         temperature: 0.7,
@@ -149,8 +202,7 @@ export default async function handler(
 
     return res.status(200).json({
       success: true,
-      content,
-      difficulty: skillLevel,
+      content: content,
       truncated: cleanedText.length > 4000
     });
 
@@ -168,7 +220,7 @@ export default async function handler(
   }
 }
 
-function generatePrompt(text: string, type: string, subject?: string): string {
+function generatePrompt(text: string, type: string, subject?: string, numberOfQuestions?: number): string {
   const subjectContext = subject ? ` for ${subject}` : '';
   
   switch (type) {
@@ -177,45 +229,40 @@ function generatePrompt(text: string, type: string, subject?: string): string {
     case 'study_guide':
       return `Create a detailed study guide${subjectContext} from the following text. Include key concepts, definitions, and important points:\n\n${text}`;
     case 'practice_quiz':
-      return `Create a practice quiz${subjectContext} based on the following text. Include 5-10 questions with answers:\n\n${text}`;
+      return `Create a practice quiz${subjectContext} based on the following text. Generate exactly ${numberOfQuestions || 10} questions with answers:\n\n${text}`;
     default:
       return `Summarize the following text${subjectContext}:\n\n${text}`;
   }
 }
 
 function formatQuestionsWithExplanations(questions: Question[]): string {
-  return questions.map((q, index) => {
-    let output = `${index + 1}. ${q.question}\n`;
-    
-    if (q.options) {
-      output += q.options.map((opt, i) => 
-        `   ${String.fromCharCode(65 + i)}) ${opt}`
-      ).join('\n') + '\n';
-    }
-    
-    output += `\nAnswer: ${q.answer}\n`;
-    
-    if (q.detailedExplanation) {
-      output += '\nExplanation:\n';
-      
-      // Format steps more concisely
-      q.detailedExplanation.steps.forEach((step, i) => {
-        output += `• ${step}\n`;
-      });
-      
-      // Only show concepts if they exist and are meaningful
-      if (q.detailedExplanation.conceptsUsed?.length > 0) {
-        output += '\nKey Concepts: ';
-        output += q.detailedExplanation.conceptsUsed.join(', ');
-        output += '\n';
-      }
-      
-      // Only show additional notes if they exist
-      if (q.detailedExplanation.additionalNotes?.trim()) {
-        output += `Tip: ${q.detailedExplanation.additionalNotes}\n`;
-      }
-    }
-    
-    return output + '\n-------------------\n';
-  }).join('\n');
+  return `
+📚 PRACTICE QUIZ
+═══════════════════════════════════════════════
+
+${questions.map((q, index) => `
+Question ${index + 1}
+──────────────
+${q.question}
+
+${q.options ? q.options.map(opt => `${opt}`).join('\n') : ''}
+
+Answer: ${q.answer}
+
+${q.detailedExplanation ? `
+Explanation:
+${q.detailedExplanation.steps.map(step => `• ${step}`).join('\n')}
+
+Key Concepts: ${q.detailedExplanation.conceptsUsed?.join(', ')}
+${q.detailedExplanation.additionalNotes ? `\nTip: ${q.detailedExplanation.additionalNotes}` : ''}` : 
+q.explanation ? `Explanation:\n${q.explanation}` : ''}
+───────────────────────────────────────────────
+`).join('\n')}
+`.trim();
+}
+
+async function generateKeyConceptsReview(sections: string[]): Promise<string> {
+  // Extract and summarize key concepts from all sections
+  const studyGuideTool = new StudyGuideTool(process.env.OPENAI_API_KEY!);
+  return studyGuideTool.generateConceptReview(sections);
 } 

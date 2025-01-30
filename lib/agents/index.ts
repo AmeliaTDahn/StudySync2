@@ -23,6 +23,12 @@ interface GenerateStudyMaterialParams {
   additionalInstructions?: string;
 }
 
+export interface StudyMaterialResponse {
+  success: boolean;
+  content: string;
+  truncated?: boolean;
+}
+
 export class StudyAgent {
   private model: ChatOpenAI;
   private executor: AgentExecutor | null = null;
@@ -88,20 +94,11 @@ export class StudyAgent {
   async generateStudyMaterial({
     documentText,
     materialType,
-    subject,
     complexity,
     questionFormat,
     skillLevel,
     numberOfQuestions
-  }: {
-    documentText: string;
-    materialType: StudyMaterialType;
-    subject?: string;
-    complexity?: SummaryComplexity;
-    questionFormat?: QuestionFormat;
-    skillLevel?: SkillLevel;
-    numberOfQuestions?: number;
-  }) {
+  }: StudyMaterialParams): Promise<StudyMaterialResponse> {
     try {
       const response = await fetch('/api/study-material', {
         method: 'POST',
@@ -111,7 +108,6 @@ export class StudyAgent {
         body: JSON.stringify({
           documentText,
           materialType,
-          subject,
           complexity,
           questionFormat,
           skillLevel,
@@ -119,14 +115,16 @@ export class StudyAgent {
         }),
       });
 
-      if (!response.ok) {
-        throw new Error('HTTP error! status: ' + response.status);
+      const data = await response.json();
+      
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to generate study material');
       }
 
-      return await response.json();
-    } catch (error) {
-      console.error('Error generating study material:', error);
-      throw error;
+      return data;
+    } catch (error: any) {
+      console.error('Study agent error:', error);
+      throw new Error(error.message || 'Error generating study material');
     }
   }
 }

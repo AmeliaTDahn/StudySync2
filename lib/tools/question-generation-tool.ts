@@ -1,12 +1,11 @@
 import OpenAI from 'openai';
 import { ExplanationTool, type DetailedExplanation } from './explanation-tool';
 
-export type QuestionFormat = 'MCQ' | 'OPEN_ENDED' | 'FILL_IN_THE_BLANK';
+export type QuestionFormat = 'MCQ';
 export type SkillLevel = 'BEGINNER' | 'INTERMEDIATE' | 'ADVANCED';
 
 export interface QuestionGenerationParams {
   text: string;
-  format?: QuestionFormat;
   skillLevel?: SkillLevel;
   numberOfQuestions?: number;
   subject?: string;
@@ -31,123 +30,129 @@ export class QuestionGenerationTool {
     this.explanationTool = new ExplanationTool(apiKey);
   }
 
-  private getPromptForFormat(format: QuestionFormat, skillLevel: SkillLevel): string {
+  private getPromptForFormat(format: QuestionFormat, skillLevel: SkillLevel, numQuestions: number): string {
     const levelContext = {
       BEGINNER: "using simple language and basic concepts",
       INTERMEDIATE: "incorporating field-specific terminology and moderate complexity",
       ADVANCED: "using advanced concepts and challenging application of knowledge"
     }[skillLevel];
 
-    switch (format) {
-      case 'MCQ':
-        return `Create multiple-choice questions ${levelContext}. For each question:
-          1. Write a clear question
-          2. Provide 4 options (A, B, C, D)
-          3. Indicate the correct answer
-          4. Add a brief explanation of why it's correct
-          Format as JSON with fields: question, options (array), correctAnswer, explanation`;
+    return `Create exactly ${numQuestions} multiple-choice questions ${levelContext}. For each question:
+      1. Write a clear question
+      2. Provide 4 options (A, B, C, D)
+      3. Indicate the correct answer
+      4. Add a DETAILED explanation that MUST include:
+         - Why the correct answer is right
+         - Why the other options are wrong
+         - A specific example or application
+         - Connection to key concepts
       
-      case 'OPEN_ENDED':
-        return `Create open-ended questions ${levelContext}. For each question:
-          1. Write a thought-provoking question that requires explanation
-          2. Provide a model answer
-          3. Include key points that should be addressed
-          Format as JSON with fields: question, modelAnswer, keyPoints`;
+      The explanation MUST be specific to the question content and NOT use placeholder text.
       
-      case 'FILL_IN_THE_BLANK':
-        return `Create fill-in-the-blank questions ${levelContext}. For each question:
-          1. Write a sentence with a key term or concept blanked out
-          2. Provide the correct answer
-          3. Add a brief explanation of the concept
-          Format as JSON with fields: question, answer, explanation`;
+      Format as JSON with fields: question, options (array), correctAnswer, explanation.
       
-      default:
-        return `Create mixed-format questions ${levelContext}`;
-    }
+      IMPORTANT: Do NOT return template text like "Use a relatable analogy" or "Compare with an opposite concept".
+      Instead, provide actual, content-specific explanations.`;
   }
 
   async generateQuestions({
     text,
-    format = 'MCQ',
     skillLevel = 'INTERMEDIATE',
-    numberOfQuestions = 5,
+    numberOfQuestions = 10,
     subject
   }: QuestionGenerationParams): Promise<Question[]> {
+    // Always use MCQ format
+    const format = 'MCQ';
+    
     try {
-      let numQuestions = Number(numberOfQuestions);
-      console.log('Starting question generation with text length:', text.length);
+      const numQuestions = 10; // Force exactly 10 questions
+      console.log('Starting question generation, forcing 10 questions');
 
-      // Split text into sections (aim for 3-5 sections)
-      const targetSections = Math.min(5, Math.max(3, Math.floor(numQuestions / 2)));
-      const sections = this.splitIntoSections(text, targetSections);
+      // Split text into 3 sections
+      const sections = this.splitIntoSections(text, 3);
       console.log(`Split text into ${sections.length} sections`);
 
-      // Calculate exact questions per section
-      const questionsPerSection = Math.floor(numQuestions / sections.length);
-      // Calculate remaining questions to distribute
-      const remainingQuestions = numQuestions % sections.length;
-      
-      console.log(`Generating ${questionsPerSection} questions per section, with ${remainingQuestions} extra`);
-
+      // Calculate exact questions per section (3,3,4)
+      const questionsPerSection = [3, 3, 4];
       const allQuestions: Question[] = [];
 
       // Process each section
       for (let i = 0; i < sections.length; i++) {
-        // Add an extra question to early sections if we have remaining questions
-        const extraQuestion = i < remainingQuestions ? 1 : 0;
-        const questionsNeeded = questionsPerSection + extraQuestion;
+        const questionsNeeded = questionsPerSection[i];
+        console.log(`Section ${i + 1}: Requesting ${questionsNeeded} questions`);
 
-        if (questionsNeeded === 0) continue;
+        let attempts = 0;
+        const maxAttempts = 3;
 
-        console.log(`Processing section ${i + 1}/${sections.length}, generating ${questionsNeeded} questions`);
+        while (attempts < maxAttempts) {
+          try {
+            const response = await this.openai.chat.completions.create({
+              model: "gpt-3.5-turbo",
+              messages: [
+                {
+                  role: "system",
+                  content: `You are a precise question generator that must generate EXACTLY ${questionsNeeded} questions.
+                    
+                    CRITICAL REQUIREMENTS:
+                    1. Generate EXACTLY ${questionsNeeded} questions - no more, no less
+                    2. Questions must be from this section only
+                    3. Each question must be unique
+                    4. Format: ${format}
+                    5. Difficulty: ${skillLevel}
+                    
+                    ${this.getPromptForFormat(format, skillLevel, questionsNeeded)}`
+                },
+                {
+                  role: "user",
+                  content: `Generate EXACTLY ${questionsNeeded} questions from this section:
 
-        const response = await this.openai.chat.completions.create({
-          model: "gpt-3.5-turbo",
-          messages: [
-            {
-              role: "system",
-              content: `Generate exactly ${questionsNeeded} questions from this section (${i + 1} of ${sections.length}).
-                Do not reference information outside this specific section.
-                
-                Rules:
-                1. Generate EXACTLY ${questionsNeeded} questions
-                2. Questions must be specific to this section's content
-                3. Each question must cover a different concept
-                4. Format: ${format}
-                5. Difficulty: ${skillLevel}
-                
-                ${this.getPromptForFormat(format, skillLevel)}`
-            },
-            {
-              role: "user",
-              content: `Section ${i + 1}/${sections.length}:\n\n${sections[i]}\n\nGenerate exactly ${questionsNeeded} questions from this section only.`
+                    Section ${i + 1}/3:
+                    ${sections[i]}
+                    
+                    You MUST return EXACTLY ${questionsNeeded} questions.`
+                }
+              ],
+              temperature: 0.7,
+              max_tokens: 2000,
+              response_format: { type: "json_object" }
+            });
+
+            const content = response.choices[0]?.message?.content;
+            if (!content) throw new Error('No content returned');
+
+            const parsedContent = JSON.parse(content);
+            if (!Array.isArray(parsedContent.questions)) {
+              throw new Error('Questions is not an array');
             }
-          ],
-          temperature: 0.7,
-          max_tokens: 2000,
-          response_format: { type: "json_object" }
-        });
 
-        const content = response.choices[0]?.message?.content;
-        if (!content) continue;
+            if (parsedContent.questions.length !== questionsNeeded) {
+              throw new Error(`Got ${parsedContent.questions.length} questions instead of ${questionsNeeded}`);
+            }
 
-        try {
-          const parsedContent = JSON.parse(content);
-          if (!Array.isArray(parsedContent.questions)) continue;
+            const sectionQuestions = this.formatQuestions(parsedContent.questions, format);
+            if (sectionQuestions.length === questionsNeeded) {
+              allQuestions.push(...sectionQuestions);
+              console.log(`Section ${i + 1}: Successfully got ${questionsNeeded} questions`);
+              break;
+            }
 
-          const sectionQuestions = this.formatQuestions(parsedContent.questions, format)
-            .slice(0, questionsNeeded);
-          
-          if (sectionQuestions.length > 0) {
-            console.log(`Added ${sectionQuestions.length} questions from section ${i + 1}`);
-            allQuestions.push(...sectionQuestions);
+            throw new Error('Formatted questions count mismatch');
+          } catch (error) {
+            attempts++;
+            console.warn(`Section ${i + 1}: Attempt ${attempts} failed:`, error);
+            if (attempts === maxAttempts) {
+              throw new Error(`Failed to get correct number of questions after ${maxAttempts} attempts`);
+            }
           }
-        } catch (error) {
-          console.error(`Error processing section ${i + 1}:`, error);
         }
       }
 
-      console.log(`Generated ${allQuestions.length} total questions across ${sections.length} sections`);
+      // Final validation
+      if (allQuestions.length !== 10) {
+        throw new Error(`Failed to generate exactly 10 questions (got ${allQuestions.length})`);
+      }
+
+      console.log('Successfully generated exactly 10 questions');
       return allQuestions;
     } catch (error) {
       console.error('Error in question generation:', error);
@@ -192,61 +197,66 @@ export class QuestionGenerationTool {
 
   private formatQuestions(questions: any[], format: QuestionFormat): Question[] {
     return questions.map(q => {
-      switch (format) {
-        case 'MCQ':
-          return {
-            question: q.question,
-            options: q.options,
-            answer: q.correctAnswer,
-            explanation: q.explanation
-          };
-        case 'OPEN_ENDED':
-          return {
-            question: q.question,
-            answer: q.modelAnswer,
-            explanation: q.keyPoints.join('\n')
-          };
-        case 'FILL_IN_THE_BLANK':
-          return {
-            question: q.question,
-            answer: q.answer,
-            explanation: q.explanation
-          };
-        default:
-          return q;
+      const formattedQuestion = {
+        question: `📝 ${q.question}`,
+        options: q.options?.map((opt: string, i: number) => 
+          `   ${String.fromCharCode(65 + i)}. ${opt}`),
+        answer: `✅ ${q.answer}`,
+        explanation: q.explanation ? `💡 Explanation:\n   ${q.explanation}` : undefined
+      };
+
+      if (format === 'MCQ') {
+        return {
+          ...formattedQuestion,
+          options: q.options,
+          answer: q.correctAnswer,
+          explanation: q.explanation
+        };
+      } else if (format === 'OPEN_ENDED') {
+        return {
+          ...formattedQuestion,
+          answer: q.modelAnswer,
+          explanation: q.keyPoints.join('\n   • ')
+        };
+      } else {
+        return {
+          ...formattedQuestion,
+          answer: q.answer,
+          explanation: q.explanation
+        };
       }
     });
   }
 
   async generateQuestionsWithExplanations({
     text,
-    format = 'MCQ',
     skillLevel = 'INTERMEDIATE',
-    numberOfQuestions = 5,
+    numberOfQuestions = 10,
     subject
   }: QuestionGenerationParams): Promise<Question[]> {
     console.log('generateQuestionsWithExplanations called with:', { numberOfQuestions });
     
-    // Ensure numberOfQuestions is a number
+    // Ensure numberOfQuestions is a valid number
     const numQuestions = Number(numberOfQuestions);
     if (isNaN(numQuestions) || numQuestions < 1) {
-      throw new Error('Invalid number of questions requested');
+      throw new Error(`Invalid number of questions requested: ${numberOfQuestions}`);
     }
 
-    // First generate questions
+    // Generate questions with exact count
     const questions = await this.generateQuestions({
       text,
-      format,
       skillLevel,
       numberOfQuestions: numQuestions,
       subject
     });
 
-    console.log(`Generated ${questions.length} questions, adding explanations`);
+    if (questions.length !== numQuestions) {
+      console.warn(`Question count mismatch - Requested: ${numQuestions}, Generated: ${questions.length}`);
+    }
 
-    // Then generate detailed explanations for each question
+    // Generate explanations for exactly the number requested
     const questionsWithExplanations = await Promise.all(
-      questions.map(async (question) => {
+      questions.slice(0, numQuestions).map(async (question) => {
         try {
           const detailedExplanation = await this.explanationTool.generateExplanation({
             question: question.question,
@@ -267,7 +277,37 @@ export class QuestionGenerationTool {
       })
     );
 
-    console.log(`Returning ${questionsWithExplanations.length} questions with explanations`);
+    console.log(`Returning exactly ${questionsWithExplanations.length} questions with explanations`);
     return questionsWithExplanations;
   }
+}
+
+function formatQuestionsWithExplanations(questions: Question[]): string {
+  return `
+📚 PRACTICE QUIZ
+═══════════════════════════════════════════════
+
+${questions.map((q, index) => `
+Question ${index + 1}
+──────────────
+${q.question}
+
+${q.options ? q.options.map(opt => `${opt}`).join('\n') : ''}
+
+<details>
+<summary>Click to reveal answer and explanation</summary>
+
+Answer: ${q.answer}
+
+${q.detailedExplanation ? `
+Explanation:
+${q.detailedExplanation.steps.map(step => `• ${step}`).join('\n')}
+
+Key Concepts: ${q.detailedExplanation.conceptsUsed?.join(', ')}
+${q.detailedExplanation.additionalNotes ? `\nTip: ${q.detailedExplanation.additionalNotes}` : ''}` : 
+q.explanation ? `Explanation:\n${q.explanation}` : ''}
+</details>
+───────────────────────────────────────────────
+`).join('\n')}
+`.trim();
 }

@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "target": "es2017",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "baseUrl": "."
+  },
+  "ts-node": {
+    "transpileOnly": true,
+    "files": true
+  }
+} 
