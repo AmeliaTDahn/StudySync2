@@ -4,7 +4,6 @@ import { Client as LangChainTracer } from "langsmith";  // Import Client and ren
 
 // Make sure these ENV vars are set in your .env or environment
 process.env.LANGCHAIN_TRACING_V2 = "true";
-process.env.LANGCHAIN_API_KEY = "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";
 process.env.LANGCHAIN_PROJECT = "studyapp";
 
 export async function createTracedLLM() {
