@@ -27,7 +27,7 @@ export default function ConnectionInvitations({ user, onInvitationHandled }: Con
       setError(null);
       
       const { data, error: invitationsError } = await getReceivedInvitations(user.id);
-      console.log('Received invitations result:', { data, error: invitationsError });
+      console.log('Raw invitations data:', data);
       
       if (invitationsError) throw invitationsError;
       
@@ -43,17 +43,28 @@ export default function ConnectionInvitations({ user, onInvitationHandled }: Con
 
   const handleInvitation = async (invitation: ConnectionInvitation, accept: boolean) => {
     try {
-      console.log('Handling invitation:', { invitation, accept });
+      console.log('Handling invitation with ID:', invitation.id, 'Type:', typeof invitation.id);
+      console.log('Full invitation object:', JSON.stringify(invitation, null, 2));
       setError(null);
+      
+      if (!invitation.id) {
+        throw new Error('No invitation ID provided');
+      }
+
+      if (typeof invitation.id === 'number') {
+        console.warn('Invitation ID is a number, expected UUID string');
+      }
       
       // Update invitation status
       const { error: updateError } = await updateInvitationStatus(
-        invitation.id,
+        String(invitation.id),
         accept ? 'accepted' : 'rejected'
       );
-      console.log('Update invitation status result:', { error: updateError });
       
-      if (updateError) throw updateError;
+      if (updateError) {
+        console.error('Update error:', updateError);
+        throw updateError;
+      }
 
       // Remove the invitation from the list
       setInvitations(invitations.filter(inv => inv.id !== invitation.id));

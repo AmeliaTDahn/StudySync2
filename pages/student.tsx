@@ -24,6 +24,7 @@ import {
 } from '../lib/supabase';
 import { ProfileForm } from '../components/profile-form';
 import ConnectionInvitations from '../components/connection-invitations';
+import { BookOpenIcon } from '@heroicons/react/24/outline';
 
 const StudentHomepage = () => {
   const router = useRouter();
@@ -395,10 +396,10 @@ const StudentHomepage = () => {
               <span>New Ticket</span>
             </button>
             <button
-              onClick={() => router.push('/messages')}
+              onClick={() => router.push('/study-tools')}
               className="text-blue-600 hover:text-blue-800"
             >
-              Messages
+              Study Tools
             </button>
             <button
               onClick={() => router.push('/schedule')}

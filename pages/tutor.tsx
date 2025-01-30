@@ -232,12 +232,6 @@ const TutorHomepage = () => {
               <span>Filter Subjects</span>
             </button>
             <button
-              onClick={() => router.push('/messages')}
-              className="text-blue-600 hover:text-blue-800"
-            >
-              Messages
-            </button>
-            <button
               onClick={() => router.push('/schedule')}
               className="text-blue-600 hover:text-blue-800"
             >

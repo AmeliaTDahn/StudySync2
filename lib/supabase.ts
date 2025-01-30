@@ -1216,11 +1216,26 @@ export const sendConnectionInvitation = async (
 };
 
 export const getReceivedInvitations = async (userId: string) => {
-  return await supabase
-    .from('connection_invitations')
-    .select('*')
-    .eq('to_user_id', userId)
-    .eq('status', 'pending');
+  try {
+    console.log('Fetching invitations for user:', userId);
+    const { data, error } = await supabase
+      .from('connection_invitations')
+      .select('*')
+      .eq('to_user_id', userId)
+      .eq('status', 'pending');
+
+    console.log('Raw invitations response:', { data, error });
+    
+    if (error) {
+      console.error('Error fetching invitations:', error);
+      return { data: null, error };
+    }
+
+    return { data, error: null };
+  } catch (error) {
+    console.error('Error in getReceivedInvitations:', error);
+    return { data: null, error };
+  }
 };
 
 export const getSentInvitations = async (userId: string) => {
@@ -1232,13 +1247,56 @@ export const getSentInvitations = async (userId: string) => {
 };
 
 export const updateInvitationStatus = async (
-  invitationId: number,
+  invitationId: string,
   status: 'accepted' | 'rejected'
 ) => {
-  return await supabase
-    .from('connection_invitations')
-    .update({ status })
-    .eq('id', invitationId);
+  try {
+    // Validate that invitationId is a UUID
+    if (!invitationId || typeof invitationId !== 'string' || !invitationId.includes('-')) {
+      console.error('Invalid invitation ID format:', invitationId);
+      return { 
+        data: null, 
+        error: new Error('Invalid invitation ID format - expected UUID') 
+      };
+    }
+
+    // First verify the invitation exists
+    const { data: invitation, error: fetchError } = await supabase
+      .from('connection_invitations')
+      .select('*')
+      .eq('id', invitationId)
+      .single();
+
+    if (fetchError) {
+      console.error('Error fetching invitation:', fetchError);
+      return { data: null, error: fetchError };
+    }
+
+    if (!invitation) {
+      console.error('Invitation not found:', invitationId);
+      return { data: null, error: new Error('Invitation not found') };
+    }
+
+    // Then update the status
+    const { data, error } = await supabase
+      .from('connection_invitations')
+      .update({ 
+        status,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', invitationId)
+      .select();
+
+    if (error) {
+      console.error('Error updating invitation status:', error);
+      return { data: null, error };
+    }
+
+    return { data, error: null };
+  } catch (error) {
+    console.error('Error in updateInvitationStatus:', error);
+    return { data: null, error };
+  }
 };
 
 export const updateTicketStatus = async (ticketId: string, status: string) => {
@@ -1261,6 +1319,326 @@ export const updateTicketStatus = async (ticketId: string, status: string) => {
     return { data, error: null };
   } catch (error) {
     console.error('Error in updateTicketStatus:', error);
+    return { data: null, error };
+  }
+};
+
+// Update the invitation acceptance function
+export async function acceptInvitation(invitationId: string) {
+  try {
+    // First get the invitation details with both users' types
+    const { data: invitation, error: fetchError } = await supabase
+      .from('connection_invitations')
+      .select(`
+        *,
+        from_user:from_user_id (
+          id,
+          user_type
+        ),
+        to_user:to_user_id (
+          id,
+          user_type
+        )
+      `)
+      .eq('id', invitationId)
+      .single();
+
+    if (fetchError) {
+      console.error('Error fetching invitation:', fetchError);
+      throw fetchError;
+    }
+
+    if (!invitation) {
+      throw new Error('Invitation not found');
+    }
+
+    console.log('Invitation details:', {
+      from_user: invitation.from_user,
+      to_user: invitation.to_user,
+      from_username: invitation.from_username,
+      to_username: invitation.to_username
+    });
+
+    // Create student-tutor connection based on user types
+    const connectionData = invitation.from_user.user_type === 'tutor' 
+      ? {
+          student_id: invitation.to_user_id,
+          student_username: invitation.to_username,
+          tutor_id: invitation.from_user_id,
+          tutor_username: invitation.from_username
+        }
+      : {
+          student_id: invitation.from_user_id,
+          student_username: invitation.from_username,
+          tutor_id: invitation.to_user_id,
+          tutor_username: invitation.to_username
+        };
+
+    console.log('Creating connection with data:', connectionData);
+
+    const { error: connectionError } = await supabase
+      .from('student_tutor_connections')
+      .insert(connectionData);
+
+    if (connectionError) {
+      console.error('Error creating connection:', connectionError);
+      throw connectionError;
+    }
+
+    // Create conversation
+    const { data: conversation, error: conversationError } = await supabase
+      .from('conversations')
+      .insert([{ created_by: invitation.from_user_id }])
+      .select()
+      .single();
+
+    if (conversationError) {
+      console.error('Error creating conversation:', conversationError);
+      throw conversationError;
+    }
+
+    // Add both users to the conversation
+    const { error: participantsError } = await supabase
+      .from('conversation_participants')
+      .insert([
+        {
+          conversation_id: conversation.id,
+          user_id: invitation.from_user_id,
+          username: invitation.from_username
+        },
+        {
+          conversation_id: conversation.id,
+          user_id: invitation.to_user_id,
+          username: invitation.to_username
+        }
+      ]);
+
+    if (participantsError) {
+      console.error('Error adding participants:', participantsError);
+      throw participantsError;
+    }
+
+    // Update invitation status
+    const { error: updateError } = await supabase
+      .from('connection_invitations')
+      .update({ status: 'accepted' })
+      .eq('id', invitationId);
+
+    if (updateError) {
+      console.error('Error updating invitation status:', updateError);
+      throw updateError;
+    }
+
+    return { success: true, conversation_id: conversation.id };
+  } catch (error) {
+    console.error('Error accepting invitation:', error);
+    return { success: false, error };
+  }
+}
+
+// Get connected tutors (for "My Tutors" tab)
+export const getConnectedTutors = async (userId: string) => {
+  try {
+    // Get tutors from accepted invitations (both sent and received)
+    const { data, error } = await supabase
+      .from('connection_invitations')
+      .select(`
+        from_user:from_user_id!inner (
+          id,
+          first_name,
+          last_name,
+          bio,
+          avatar_url,
+          user_type
+        ),
+        to_user:to_user_id!inner (
+          id,
+          first_name,
+          last_name,
+          bio,
+          avatar_url,
+          user_type
+        )
+      `)
+      .eq('status', 'accepted')
+      .or(`from_user_id.eq.${userId},to_user_id.eq.${userId}`);
+
+    if (error) {
+      console.error('Error fetching connected tutors:', error);
+      return { data: null, error };
+    }
+
+    // Transform the data to get the connected tutor profiles
+    const connectedTutors = data.map(connection => {
+      // If the user is the 'from_user', return the 'to_user' as the connected tutor (if they're a tutor)
+      if (connection.from_user.id === userId) {
+        return connection.to_user.user_type === 'tutor' ? connection.to_user : null;
+      }
+      // Otherwise return the 'from_user' if they're a tutor
+      return connection.from_user.user_type === 'tutor' ? connection.from_user : null;
+    }).filter(Boolean); // Remove any null values
+
+    return { data: connectedTutors, error: null };
+  } catch (error) {
+    console.error('Error in getConnectedTutors:', error);
+    return { data: null, error };
+  }
+};
+
+// Get connected students (for "My Students" tab)
+export const getConnectedStudents = async (userId: string) => {
+  try {
+    // Get students from accepted invitations (both sent and received)
+    const { data, error } = await supabase
+      .from('connection_invitations')
+      .select(`
+        from_user:from_user_id!inner (
+          id,
+          first_name,
+          last_name,
+          bio,
+          avatar_url,
+          user_type
+        ),
+        to_user:to_user_id!inner (
+          id,
+          first_name,
+          last_name,
+          bio,
+          avatar_url,
+          user_type
+        )
+      `)
+      .eq('status', 'accepted')
+      .or(`from_user_id.eq.${userId},to_user_id.eq.${userId}`);
+
+    if (error) {
+      console.error('Error fetching connected students:', error);
+      return { data: null, error };
+    }
+
+    // Transform the data to get the connected student profiles
+    const connectedStudents = data.map(connection => {
+      // If the user is the 'from_user', return the 'to_user' as the connected student (if they're a student)
+      if (connection.from_user.id === userId) {
+        return connection.to_user.user_type === 'student' ? connection.to_user : null;
+      }
+      // Otherwise return the 'from_user' if they're a student
+      return connection.from_user.user_type === 'student' ? connection.from_user : null;
+    }).filter(Boolean); // Remove any null values
+
+    return { data: connectedStudents, error: null };
+  } catch (error) {
+    console.error('Error in getConnectedStudents:', error);
+    return { data: null, error };
+  }
+};
+
+// Get available tutors (for "Find Tutors" tab)
+export const getAvailableTutors = async (userId: string) => {
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select(`
+        *,
+        tutor_subjects (
+          subject
+        )
+      `)
+      .eq('user_type', 'tutor')
+      .not('id', 'in', (
+        // Exclude tutors who have accepted connections with this student
+        supabase
+          .from('connection_invitations')
+          .select('from_user_id')
+          .eq('to_user_id', userId)
+          .eq('status', 'accepted')
+      ))
+      .not('id', 'in', (
+        // Also exclude tutors who this student has accepted
+        supabase
+          .from('connection_invitations')
+          .select('to_user_id')
+          .eq('from_user_id', userId)
+          .eq('status', 'accepted')
+      ))
+      .not('id', 'in', (
+        // Exclude tutors with pending invitations
+        supabase
+          .from('connection_invitations')
+          .select('from_user_id')
+          .eq('to_user_id', userId)
+          .eq('status', 'pending')
+      ))
+      .not('id', 'in', (
+        // Also exclude tutors who this student has sent pending invitations to
+        supabase
+          .from('connection_invitations')
+          .select('to_user_id')
+          .eq('from_user_id', userId)
+          .eq('status', 'pending')
+      ));
+
+    if (error) {
+      console.error('Error fetching available tutors:', error);
+      return { data: null, error };
+    }
+
+    return { data, error: null };
+  } catch (error) {
+    console.error('Error in getAvailableTutors:', error);
+    return { data: null, error };
+  }
+};
+
+// Get available students (for "Find Students" tab)
+export const getAvailableStudents = async (userId: string) => {
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('user_type', 'student')
+      .not('id', 'in', (
+        // Exclude students who have accepted connections with this tutor
+        supabase
+          .from('connection_invitations')
+          .select('to_user_id')
+          .eq('from_user_id', userId)
+          .eq('status', 'accepted')
+      ))
+      .not('id', 'in', (
+        // Also exclude students who this tutor has accepted
+        supabase
+          .from('connection_invitations')
+          .select('from_user_id')
+          .eq('to_user_id', userId)
+          .eq('status', 'accepted')
+      ))
+      .not('id', 'in', (
+        // Exclude students with pending invitations
+        supabase
+          .from('connection_invitations')
+          .select('to_user_id')
+          .eq('from_user_id', userId)
+          .eq('status', 'pending')
+      ))
+      .not('id', 'in', (
+        // Also exclude students who have sent pending invitations to this tutor
+        supabase
+          .from('connection_invitations')
+          .select('from_user_id')
+          .eq('to_user_id', userId)
+          .eq('status', 'pending')
+      ));
+
+    if (error) {
+      console.error('Error fetching available students:', error);
+      return { data: null, error };
+    }
+
+    return { data, error: null };
+  } catch (error) {
+    console.error('Error in getAvailableStudents:', error);
     return { data: null, error };
   }
 }; 
