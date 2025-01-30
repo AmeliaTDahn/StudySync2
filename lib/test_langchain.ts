@@ -1,58 +1,32 @@
 import { ChatOpenAI } from "@langchain/openai";
+import dotenv from 'dotenv';
 import { Client } from "langsmith";
-import { LLMChain } from "langchain/chains";
-import { PromptTemplate } from "@langchain/core/prompts";
 
-export async function testLangSmithConnection() {
+// Load environment variables
+dotenv.config();
+
+// Initialize LangSmith client
+const client = new Client({
+  apiKey: process.env.LANGSMITH_API_KEY,
+  projectName: "studyapp" // Changed to your actual project name
+});
+
+async function testLangChain() {
   try {
-    // First test the client connection
-    const client = new Client({
-      apiUrl: process.env.LANGCHAIN_ENDPOINT,
-      apiKey: process.env.LANGCHAIN_API_KEY,
-    });
-
-    // Test project access
-    const projects = await client.listProjects();
-    console.log("Connected to LangSmith. Available projects:", projects);
-
-    // Create a simple chain to test tracing
     const llm = new ChatOpenAI({
-      modelName: "gpt-3.5-turbo",
-      temperature: 0.7,
-      openAIApiKey: process.env.OPENAI_API_KEY  // Explicitly pass the OpenAI API key
+      openAIApiKey: process.env.OPENAI_API_KEY,
+      temperature: 0.9
     });
-
-    const prompt = PromptTemplate.fromTemplate(
-      "What is a simple explanation of {topic}?"
-    );
-
-    const chain = new LLMChain({
-      llm,
-      prompt,
-      tags: ["test-connection"],
+    
+    const result = await llm.invoke("Hello, world!", {
+      tags: ["test"],
+      metadata: { environment: "development" }
     });
-
-    // Run the chain
-    const result = await chain.invoke({
-      topic: "LangSmith",
-    });
-
-    console.log("Test chain result:", result);
-    console.log("Check your LangSmith dashboard to see the trace!");
-
-    return {
-      success: true,
-      message: "Successfully connected to LangSmith and ran test chain",
-      projects,
-      result
-    };
-
+    console.log("LangChain Response:", result);
   } catch (error) {
-    console.error("LangSmith connection test failed:", error);
-    return {
-      success: false,
-      message: error instanceof Error ? error.message : "Unknown error occurred",
-      error
-    };
+    console.error("Error testing LangChain:", error);
   }
-} 
+}
+
+// Run the test
+testLangChain(); 

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { User } from '@supabase/supabase-js';
-import { Plus, X, Filter } from 'lucide-react';
+import { Plus, X, Filter, BookOpen } from 'lucide-react';
+import Link from 'next/link';
 import { 
   supabase,
   getStudentTickets,
@@ -24,7 +25,6 @@ import {
 } from '../lib/supabase';
 import { ProfileForm } from '../components/profile-form';
 import ConnectionInvitations from '../components/connection-invitations';
-import { BookOpenIcon } from '@heroicons/react/24/outline';
 
 const StudentHomepage = () => {
   const router = useRouter();
@@ -396,10 +396,10 @@ const StudentHomepage = () => {
               <span>New Ticket</span>
             </button>
             <button
-              onClick={() => router.push('/study-tools')}
+              onClick={() => router.push('/messages')}
               className="text-blue-600 hover:text-blue-800"
             >
-              Study Tools
+              Messages
             </button>
             <button
               onClick={() => router.push('/schedule')}
@@ -419,6 +419,12 @@ const StudentHomepage = () => {
             >
               Tutors
             </button>
+            <Link
+              href="/study-tools"
+              className="text-blue-600 hover:text-blue-800"
+            >
+              Study Tools
+            </Link>
             <span className="text-gray-600">Welcome, {profile?.username || user?.email}</span>
             <button 
               className="text-gray-600 hover:text-gray-800"
