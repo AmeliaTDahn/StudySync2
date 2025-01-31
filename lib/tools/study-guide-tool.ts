@@ -1,78 +1,79 @@
 import OpenAI from 'openai';
+import { SkillLevel } from './question-generation-tool';
+
+export interface StudyGuideParams {
+  text: string;
+  subject?: string;
+  skillLevel?: SkillLevel;
+  complexity?: string;
+}
 
 export class StudyGuideTool {
   private openai: OpenAI;
 
   constructor(apiKey: string) {
     this.openai = new OpenAI({
-      apiKey: apiKey
+      apiKey: apiKey,
     });
   }
 
   async generateStudyGuide({
     text,
-    subject,
-    skillLevel,
-    sectionNumber,
-    totalSections
-  }: {
-    text: string;
-    subject?: string;
-    skillLevel?: string;
-    sectionNumber?: number;
-    totalSections?: number;
-  }) {
+    complexity = 'INTERMEDIATE'
+  }: StudyGuideParams): Promise<string> {
     try {
       const response = await this.openai.chat.completions.create({
-        model: "gpt-3.5-turbo-16k",  // Use 16k model for longer context
+        model: "gpt-3.5-turbo-16k",
         messages: [
           {
             role: "system",
-            content: `You are a study guide creator that breaks down complex topics into clear, organized sections.
-            Create a detailed study guide that includes:
-            - Main concepts and definitions
-            - Key points and explanations
-            - Examples and applications
-            - Important relationships between concepts
-            ${sectionNumber ? `This is section ${sectionNumber} of ${totalSections}.` : ''}`
+            content: `Create a detailed study guide with the following sections. Each section must start with its title in ALL CAPS:
+
+            MAIN IDEAS & THEMES
+            - List and explain major concepts
+            - Include supporting details
+            - Number each main idea
+
+            IMPORTANT DETAILS
+            - List key facts and information
+            - Use bullet points
+
+            EXAMPLES & APPLICATIONS
+            - Provide concrete examples
+            - Show practical applications
+
+            REVIEW QUESTIONS
+            - Create thought-provoking questions
+            - Include brief answers
+
+            SUMMARY POINTS
+            - List key takeaways
+            - Use bullet points
+
+            Format each section with its title in ALL CAPS followed by content.
+            Use clear formatting and spacing between sections.`
           },
           {
             role: "user",
-            content: `Create a comprehensive study guide for this ${subject || ''} content:\n\n${text}`
+            content: text
           }
         ],
-        temperature: 0.7,
-        max_tokens: 4000
+        temperature: 0.5,
+        max_tokens: 2000,
+        presence_penalty: 0,
+        frequency_penalty: 0
       });
 
-      return response.choices[0]?.message?.content || '';
-    } catch (error) {
-      console.error('Error generating study guide:', error);
-      throw error;
-    }
-  }
+      const content = response.choices[0]?.message?.content;
+      if (!content) {
+        throw new Error('No content generated');
+      }
 
-  async generateConceptReview(sections: string[]): Promise<string> {
-    try {
-      const response = await this.openai.chat.completions.create({
-        model: "gpt-3.5-turbo",
-        messages: [
-          {
-            role: "system",
-            content: "Create a concise review of the key concepts from all sections."
-          },
-          {
-            role: "user",
-            content: `Summarize the key concepts from these study guide sections:\n\n${sections.join('\n\n')}`
-          }
-        ],
-        temperature: 0.7,
-        max_tokens: 1000
-      });
+      console.log('Generated study guide content:', content); // Add this for debugging
 
-      return response.choices[0]?.message?.content || '';
+      return content;
     } catch (error) {
-      console.error('Error generating concept review:', error);
+      console.error('Error in study guide generation:', error);
       throw error;
     }
   }

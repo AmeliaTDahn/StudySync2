@@ -95,11 +95,14 @@ export class StudyAgent {
     documentText,
     materialType,
     complexity,
-    questionFormat,
     skillLevel,
     numberOfQuestions
-  }: StudyMaterialParams): Promise<StudyMaterialResponse> {
+  }: StudyMaterialRequest): Promise<StudyMaterialResponse> {
     try {
+      const controller = new AbortController();
+      // Increase timeout to 3 minutes
+      const timeoutId = setTimeout(() => controller.abort(), 180000);
+
       const response = await fetch('/api/study-material', {
         method: 'POST',
         headers: {
@@ -109,22 +112,25 @@ export class StudyAgent {
           documentText,
           materialType,
           complexity,
-          questionFormat,
           skillLevel,
           numberOfQuestions
         }),
+        signal: controller.signal
       });
 
-      const data = await response.json();
-      
-      if (!data.success) {
-        throw new Error(data.error || 'Failed to generate study material');
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to generate study material');
       }
 
-      return data;
+      return await response.json();
     } catch (error: any) {
-      console.error('Study agent error:', error);
-      throw new Error(error.message || 'Error generating study material');
+      if (error.name === 'AbortError') {
+        throw new Error('Request is taking too long. Try with a shorter text or break it into smaller parts.');
+      }
+      throw error;
     }
   }
 }

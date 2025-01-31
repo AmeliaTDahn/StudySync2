@@ -19,6 +19,7 @@ export default function StudyTools() {
   const [error, setError] = useState<string | null>(null);
   const [skillLevel, setSkillLevel] = useState<SkillLevel>('INTERMEDIATE');
   const [numberOfQuestions, setNumberOfQuestions] = useState(10);
+  const [generationTime, setGenerationTime] = useState<number | null>(null);
 
   useEffect(() => {
     // Initialize the study agent
@@ -56,23 +57,37 @@ export default function StudyTools() {
     setIsProcessing(true);
     setError(null);
     setResult(null);
+    setGenerationTime(null);
+
+    const startTime = Date.now(); // Start timer
 
     try {
+      console.log('Submitting with:', {
+        materialType,
+        textLength: documentText.length,
+        skillLevel
+      });
+
       const response = await studyAgent.generateStudyMaterial({
         documentText,
         materialType,
         complexity,
-        questionFormat: 'MCQ',
         skillLevel,
-        numberOfQuestions: 10
+        numberOfQuestions
       });
+
+      const endTime = Date.now(); // End timer
+      setGenerationTime(endTime - startTime); // Calculate duration
+
+      console.log('Response received:', response);
 
       if (response.success && response.content) {
         setResult(response.content);
       } else {
-        throw new Error('Failed to generate study material');
+        throw new Error(response.error || 'Failed to generate study material');
       }
     } catch (err: any) {
+      console.error('Generation error:', err);
       setError(err.message || 'Error generating study material');
     } finally {
       setIsProcessing(false);
@@ -81,19 +96,15 @@ export default function StudyTools() {
 
   const downloadStudyMaterial = () => {
     if (!result) return;
-
-    // Create file content based on material type
-    const fileName = `study_material_${materialType}_${new Date().toISOString().split('T')[0]}.txt`;
     
-    // Create blob and download
-    const blob = new Blob([result], { type: 'text/plain' });
+    const blob = new Blob([result], { type: 'text/html' });
     const url = window.URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = fileName;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `study_guide_${new Date().toISOString()}.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
     window.URL.revokeObjectURL(url);
   };
 
@@ -105,9 +116,9 @@ export default function StudyTools() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="max-w-4xl mx-auto p-6">
+      <div className="max-w-4xl mx-auto p-6 w-full">
         {/* Header Section */}
-        <div className="flex justify-between items-center mb-8">
+        <div className="flex justify-between items-center mb-8 w-full">
           <h1 className="text-3xl font-bold text-gray-900">Study Tools</h1>
           <Link 
             href="/dashboard" 
@@ -130,7 +141,7 @@ export default function StudyTools() {
         </div>
 
         {/* Main Content */}
-        <div className="bg-white rounded-lg shadow">
+        <div className="bg-white rounded-lg shadow w-full">
           <div className="p-6">
             <form onSubmit={handleSubmit} className="space-y-6">
               {/* File Upload Section */}
@@ -254,6 +265,11 @@ export default function StudyTools() {
         {/* Results Section */}
         {result && (
           <div className="mt-6 space-y-4">
+            {generationTime && (
+              <div className="text-sm text-gray-600 text-right">
+                Generation time: {(generationTime / 1000).toFixed(2)} seconds
+              </div>
+            )}
             <div className="flex justify-end">
               <button
                 onClick={downloadStudyMaterial}
@@ -275,8 +291,21 @@ export default function StudyTools() {
                 Download Study Material
               </button>
             </div>
-            <div className="bg-white rounded-lg shadow-lg p-6">
-              <pre className="whitespace-pre-wrap text-gray-800">{result}</pre>
+            <div className="bg-white rounded-lg shadow-lg w-full">
+              {materialType === 'practice_quiz' ? (
+                <div 
+                  dangerouslySetInnerHTML={{ __html: result }} 
+                  suppressHydrationWarning={true}
+                  className="w-full"
+                />
+              ) : materialType === 'study_guide' || materialType === 'summary' ? (
+                <div 
+                  dangerouslySetInnerHTML={{ __html: result }}
+                  className="w-full"
+                />
+              ) : (
+                <pre className="whitespace-pre-wrap text-gray-800 p-6 w-full">{result}</pre>
+              )}
             </div>
           </div>
         )}

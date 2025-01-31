@@ -1,11 +1,12 @@
 import OpenAI from 'openai';
 import { ExplanationTool, type DetailedExplanation } from './explanation-tool';
 
-export type QuestionFormat = 'MCQ';
+export type QuestionFormat = 'MCQ' | 'OPEN_ENDED' | 'FILL_IN_THE_BLANK';
 export type SkillLevel = 'BEGINNER' | 'INTERMEDIATE' | 'ADVANCED';
 
 export interface QuestionGenerationParams {
   text: string;
+  format?: QuestionFormat;
   skillLevel?: SkillLevel;
   numberOfQuestions?: number;
   subject?: string;
@@ -37,33 +38,41 @@ export class QuestionGenerationTool {
       ADVANCED: "using advanced concepts and challenging application of knowledge"
     }[skillLevel];
 
-    return `Create exactly ${numQuestions} multiple-choice questions ${levelContext}. For each question:
-      1. Write a clear question
-      2. Provide 4 options (A, B, C, D)
-      3. Indicate the correct answer
-      4. Add a DETAILED explanation that MUST include:
-         - Why the correct answer is right
-         - Why the other options are wrong
-         - A specific example or application
-         - Connection to key concepts
+    switch (format) {
+      case 'MCQ':
+        return `Create exactly ${numQuestions} multiple-choice questions ${levelContext}. For each question:
+          1. Write a clear question
+          2. Provide 4 options (A, B, C, D)
+          3. Indicate the correct answer
+          4. Add a brief explanation of why it's correct
+          Format as JSON with fields: question, options (array), correctAnswer, explanation`;
       
-      The explanation MUST be specific to the question content and NOT use placeholder text.
+      case 'OPEN_ENDED':
+        return `Create exactly ${numQuestions} open-ended questions ${levelContext}. For each question:
+          1. Write a thought-provoking question that requires explanation
+          2. Provide a model answer
+          3. Include key points that should be addressed
+          Format as JSON with fields: question, modelAnswer, keyPoints`;
       
-      Format as JSON with fields: question, options (array), correctAnswer, explanation.
+      case 'FILL_IN_THE_BLANK':
+        return `Create exactly ${numQuestions} fill-in-the-blank questions ${levelContext}. For each question:
+          1. Write a sentence with a key term or concept blanked out
+          2. Provide the correct answer
+          3. Add a brief explanation of the concept
+          Format as JSON with fields: question, answer, explanation`;
       
-      IMPORTANT: Do NOT return template text like "Use a relatable analogy" or "Compare with an opposite concept".
-      Instead, provide actual, content-specific explanations.`;
+      default:
+        return `Create exactly ${numQuestions} mixed-format questions ${levelContext}`;
+    }
   }
 
   async generateQuestions({
     text,
+    format = 'MCQ',
     skillLevel = 'INTERMEDIATE',
     numberOfQuestions = 10,
     subject
   }: QuestionGenerationParams): Promise<Question[]> {
-    // Always use MCQ format
-    const format = 'MCQ';
-    
     try {
       const numQuestions = 10; // Force exactly 10 questions
       console.log('Starting question generation, forcing 10 questions');
@@ -230,6 +239,7 @@ export class QuestionGenerationTool {
 
   async generateQuestionsWithExplanations({
     text,
+    format = 'MCQ',
     skillLevel = 'INTERMEDIATE',
     numberOfQuestions = 10,
     subject
@@ -245,6 +255,7 @@ export class QuestionGenerationTool {
     // Generate questions with exact count
     const questions = await this.generateQuestions({
       text,
+      format,
       skillLevel,
       numberOfQuestions: numQuestions,
       subject
@@ -280,34 +291,4 @@ export class QuestionGenerationTool {
     console.log(`Returning exactly ${questionsWithExplanations.length} questions with explanations`);
     return questionsWithExplanations;
   }
-}
-
-function formatQuestionsWithExplanations(questions: Question[]): string {
-  return `
-📚 PRACTICE QUIZ
-═══════════════════════════════════════════════
-
-${questions.map((q, index) => `
-Question ${index + 1}
-──────────────
-${q.question}
-
-${q.options ? q.options.map(opt => `${opt}`).join('\n') : ''}
-
-<details>
-<summary>Click to reveal answer and explanation</summary>
-
-Answer: ${q.answer}
-
-${q.detailedExplanation ? `
-Explanation:
-${q.detailedExplanation.steps.map(step => `• ${step}`).join('\n')}
-
-Key Concepts: ${q.detailedExplanation.conceptsUsed?.join(', ')}
-${q.detailedExplanation.additionalNotes ? `\nTip: ${q.detailedExplanation.additionalNotes}` : ''}` : 
-q.explanation ? `Explanation:\n${q.explanation}` : ''}
-</details>
-───────────────────────────────────────────────
-`).join('\n')}
-`.trim();
 }
