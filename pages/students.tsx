@@ -287,12 +287,6 @@ const StudentsPage = () => {
                     {showingConnected && (
                       <div className="flex space-x-2">
                         <button
-                          onClick={() => router.push(`/messages?user=${student.user_id}`)}
-                          className="flex-1 bg-blue-600 text-white px-3 py-2 rounded hover:bg-blue-700"
-                        >
-                          Message
-                        </button>
-                        <button
                           onClick={() => router.push(`/schedule?student=${student.user_id}`)}
                           className="flex-1 bg-green-600 text-white px-3 py-2 rounded hover:bg-green-700"
                         >

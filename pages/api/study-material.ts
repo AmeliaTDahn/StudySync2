@@ -481,39 +481,17 @@ export default async function handler(
       const studyGuideTool = new StudyGuideTool(process.env.OPENAI_API_KEY!);
       
       try {
-        // Break content into smaller chunks
-        const maxChunkSize = 3000; // Even smaller chunks for faster processing
-        const chunks = [];
-        
-        // Split content into smaller pieces
-        for (let i = 0; i < mainContent.length; i += maxChunkSize) {
-          chunks.push(mainContent.slice(i, i + maxChunkSize));
-        }
-
-        // Process all chunks in parallel
-        console.log(`Processing ${chunks.length} chunks in parallel...`);
-        const guideChunks = await Promise.all(
-          chunks.map(chunk => 
-            studyGuideTool.generateStudyGuide({
-              text: chunk,
-              complexity: complexity || 'intermediate',
-            }).catch(error => {
-              console.error('Error processing chunk:', error);
-              return null;
-            })
-          )
-        );
-
-        // Filter out failed chunks and combine results
-        const guideSection = guideChunks
-          .filter(Boolean)
-          .join('\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n');
+        // Generate a single study guide instead of chunks
+        const guideSection = await studyGuideTool.generateStudyGuide({
+          text: mainContent.slice(0, 6000), // Take first 6000 characters for a concise guide
+          complexity: complexity || 'intermediate',
+        });
 
         if (!guideSection) {
-          throw new Error('Failed to generate any content. Please try with a shorter text.');
+          throw new Error('Failed to generate study guide content');
         }
 
-        // Format the combined guide sections into HTML
+        // Format into HTML with sections
         content = `
 <!DOCTYPE html>
 <html>
@@ -588,6 +566,7 @@ export default async function handler(
           ?.trim()
           .split('\n')
           .filter(line => line.trim())
+          .filter(line => !line.includes('MAIN IDEAS & THEMES'))
           .map(line => `<div class="content-item">${line.trim()}</div>`)
           .join('\n')}
       </div>
@@ -604,6 +583,7 @@ export default async function handler(
           ?.trim()
           .split('\n')
           .filter(line => line.trim())
+          .filter(line => !line.includes('IMPORTANT DETAILS'))
           .map(line => `<div class="content-item">${line.trim()}</div>`)
           .join('\n')}
       </div>
@@ -620,6 +600,7 @@ export default async function handler(
           ?.trim()
           .split('\n')
           .filter(line => line.trim())
+          .filter(line => !line.includes('EXAMPLES & APPLICATIONS'))
           .map(line => `<div class="content-item">${line.trim()}</div>`)
           .join('\n')}
       </div>
@@ -636,6 +617,7 @@ export default async function handler(
           ?.trim()
           .split('\n')
           .filter(line => line.trim())
+          .filter(line => !line.includes('REVIEW QUESTIONS'))
           .map(line => `<div class="content-item">${line.trim()}</div>`)
           .join('\n')}
       </div>
@@ -651,6 +633,7 @@ export default async function handler(
           ?.trim()
           .split('\n')
           .filter(line => line.trim())
+          .filter(line => !line.includes('SUMMARY POINTS'))
           .map(line => `<div class="content-item">${line.trim()}</div>`)
           .join('\n')}
       </div>
@@ -661,7 +644,7 @@ export default async function handler(
 
       } catch (error) {
         console.error('Study guide generation error:', error);
-        throw new Error('Failed to generate study guide. Please try with a shorter text or in multiple parts.');
+        throw new Error('Failed to generate study guide. Please try with a shorter text.');
       }
 
     } else {
